@@ -72,6 +72,7 @@ struct AppSurface {
     surface: Surface<'static>,
     device: Device,
     queue: Queue,
+    size: PhysicalSize<u32>,
     config: wgpu::SurfaceConfiguration,
 }
 
@@ -105,7 +106,7 @@ impl App {
             surface: None,
         })
     }
-    
+
     // TODO: resize
 }
 
@@ -120,8 +121,6 @@ impl ApplicationHandler for App {
                 )
                 .expect("Creating window"),
         );
-
-        let size = window.inner_size();
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -177,6 +176,8 @@ impl ApplicationHandler for App {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        let size = window.inner_size();
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -193,6 +194,7 @@ impl ApplicationHandler for App {
             surface,
             device,
             queue,
+            size,
             config,
         });
     }
