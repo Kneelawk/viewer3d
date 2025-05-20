@@ -5,9 +5,10 @@ use anyhow::Context;
 use cfg_if::cfg_if;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(target_arch = "wasm32")]
 use tokio::runtime;
 use tokio::runtime::Runtime;
-use wgpu::{Adapter, Device, Instance, Queue, Surface};
+use wgpu::{Device, Instance, Queue, Surface};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
@@ -107,7 +108,24 @@ impl App {
         })
     }
 
-    // TODO: resize
+    fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        if let Some(surface) = &mut self.surface {
+            if new_size.width > 0 && new_size.height > 0 {
+                surface.size = new_size;
+                surface.config.width = new_size.width;
+                surface.config.height = new_size.height;
+                surface.surface.configure(&surface.device, &surface.config);
+            }
+        }
+    }
+
+    fn update(&mut self) {
+
+    }
+
+    fn render(&mut self, texture: wgpu::SurfaceTexture) {
+
+    }
 }
 
 impl ApplicationHandler for App {
@@ -210,7 +228,30 @@ impl ApplicationHandler for App {
                 info!("Exiting...");
                 event_loop.exit();
             }
-            WindowEvent::RedrawRequested => {}
+            WindowEvent::RedrawRequested => {
+                if self.surface.is_none() {
+                    return;
+                }
+
+                self.update();
+
+                match self.surface.as_ref().unwrap().surface.get_current_texture() {
+                    Ok(texture) => {}
+                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                        self.resize(self.surface.as_ref().unwrap().window.inner_size());
+                    }
+                    Err(wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other) => {
+                        error!("Out of memory!");
+                        event_loop.exit();
+                    }
+                    Err(wgpu::SurfaceError::Timeout) => {
+                        warn!("Surface timeout");
+                    }
+                }
+            }
+            WindowEvent::Resized(new_size) => {
+                self.resize(new_size);
+            }
             _ => {}
         }
     }
