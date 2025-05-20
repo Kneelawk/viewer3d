@@ -122,9 +122,7 @@ impl App {
         }
     }
 
-    fn update(&mut self) {}
-
-    fn render(&mut self, output: wgpu::SurfaceTexture) {
+    fn draw(&mut self, output: wgpu::SurfaceTexture) -> anyhow::Result<()> {
         if let Some(surface) = &mut self.surface {
             let view = output.texture.create_view(&Default::default());
 
@@ -160,6 +158,8 @@ impl App {
             surface.queue.submit(once(encoder.finish()));
             output.present();
         }
+
+        Ok(())
     }
 }
 
@@ -268,10 +268,13 @@ impl ApplicationHandler for App {
                     return;
                 }
 
-                self.update();
-
                 match self.surface.as_ref().unwrap().surface.get_current_texture() {
-                    Ok(texture) => self.render(texture),
+                    Ok(texture) => {
+                        if let Err(err) = self.draw(texture) {
+                            error!("Draw Error: {:?}", err);
+                            event_loop.exit();
+                        }
+                    }
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         self.resize(self.surface.as_ref().unwrap().window.inner_size());
                     }
