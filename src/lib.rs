@@ -3,6 +3,7 @@ extern crate tracing;
 
 use anyhow::Context;
 use cfg_if::cfg_if;
+use std::iter::once;
 use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
@@ -57,6 +58,8 @@ pub fn run_impl(args: StartupArgs) -> anyhow::Result<()> {
     info!("Opening window...");
 
     event_loop.run_app(&mut app).context("Running event loop")?;
+
+    info!("Done.");
 
     Ok(())
 }
@@ -119,12 +122,44 @@ impl App {
         }
     }
 
-    fn update(&mut self) {
+    fn update(&mut self) {}
 
-    }
+    fn render(&mut self, output: wgpu::SurfaceTexture) {
+        if let Some(surface) = &mut self.surface {
+            let view = output.texture.create_view(&Default::default());
 
-    fn render(&mut self, texture: wgpu::SurfaceTexture) {
+            let mut encoder =
+                surface
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Render Encoder"),
+                    });
 
+            {
+                let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.1,
+                                g: 0.1,
+                                b: 0.1,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            }
+
+            surface.queue.submit(once(encoder.finish()));
+            output.present();
+        }
     }
 }
 
@@ -236,7 +271,7 @@ impl ApplicationHandler for App {
                 self.update();
 
                 match self.surface.as_ref().unwrap().surface.get_current_texture() {
-                    Ok(texture) => {}
+                    Ok(texture) => self.render(texture),
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         self.resize(self.surface.as_ref().unwrap().window.inner_size());
                     }
