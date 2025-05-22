@@ -1,11 +1,15 @@
+#![feature(let_chains)]
+
 #[macro_use]
 extern crate tracing;
 
 use anyhow::Context;
 use cfg_if::cfg_if;
+use egui::ViewportId;
 use std::iter::once;
 use std::path::PathBuf;
 use std::sync::Arc;
+use egui_wgpu::ScreenDescriptor;
 #[cfg(target_arch = "wasm32")]
 use tokio::runtime;
 use tokio::runtime::Runtime;
@@ -78,6 +82,9 @@ struct AppSurface {
     queue: Queue,
     size: PhysicalSize<u32>,
     config: wgpu::SurfaceConfiguration,
+    egui_ctx: egui::Context,
+    egui_state: egui_winit::State,
+    egui_renderer: egui_wgpu::Renderer,
 }
 
 impl App {
@@ -112,13 +119,14 @@ impl App {
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
-        if let Some(surface) = &mut self.surface {
-            if new_size.width > 0 && new_size.height > 0 {
-                surface.size = new_size;
-                surface.config.width = new_size.width;
-                surface.config.height = new_size.height;
-                surface.surface.configure(&surface.device, &surface.config);
-            }
+        if let Some(surface) = &mut self.surface
+            && new_size.width > 0
+            && new_size.height > 0
+        {
+            surface.size = new_size;
+            surface.config.width = new_size.width;
+            surface.config.height = new_size.height;
+            surface.surface.configure(&surface.device, &surface.config);
         }
     }
 
@@ -154,6 +162,31 @@ impl App {
                     occlusion_query_set: None,
                 });
             }
+
+            let egui_output = surface.egui_ctx.run(
+                surface.egui_state.take_egui_input(&surface.window),
+                |ctx| {},
+            );
+
+            let scale_factor = surface.window.scale_factor() as f32;
+
+            let paint_jobs = surface.egui_ctx.tessellate(egui_output.shapes, scale_factor);
+
+            let descriptor = ScreenDescriptor {
+                size_in_pixels: [surface.size.width, surface.size.height],
+                pixels_per_point: scale_factor,
+            };
+            surface.egui_renderer.update_buffers(&surface.device, &surface.queue, &mut encoder, &paint_jobs, &descriptor);
+            
+            for (tex_id, delta) in egui_output.textures_delta.set {
+                surface.egui_renderer.update_texture(&surface.device, &surface.queue, tex_id, &delta);
+            }
+            
+            surface.egui_renderer.render
+
+            surface
+                .egui_state
+                .handle_platform_output(&surface.window, egui_output.platform_output);
 
             surface.queue.submit(once(encoder.finish()));
             output.present();
@@ -242,6 +275,18 @@ impl ApplicationHandler for App {
             view_formats: vec![],
         };
 
+        // setup egui
+        let egui_ctx = egui::Context::default();
+        let egui_state = egui_winit::State::new(
+            egui_ctx.clone(),
+            ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            window.theme(),
+            Some(adapter.limits().max_texture_dimension_2d as usize),
+        );
+        let egui_renderer = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
+
         self.surface = Some(AppSurface {
             window,
             surface,
@@ -249,6 +294,9 @@ impl ApplicationHandler for App {
             queue,
             size,
             config,
+            egui_ctx,
+            egui_state,
+            egui_renderer,
         });
     }
 
@@ -258,39 +306,47 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        match event {
-            WindowEvent::CloseRequested => {
-                info!("Exiting...");
-                event_loop.exit();
-            }
-            WindowEvent::RedrawRequested => {
-                if self.surface.is_none() {
-                    return;
-                }
+        let response = if let Some(surface) = &mut self.surface {
+            Some(surface.egui_state.on_window_event(&surface.window, &event))
+        } else {
+            None
+        };
 
-                match self.surface.as_ref().unwrap().surface.get_current_texture() {
-                    Ok(texture) => {
-                        if let Err(err) = self.draw(texture) {
-                            error!("Draw Error: {:?}", err);
+        if response.is_none_or(|res| !res.consumed) {
+            match event {
+                WindowEvent::CloseRequested => {
+                    info!("Exiting...");
+                    event_loop.exit();
+                }
+                WindowEvent::RedrawRequested => {
+                    if self.surface.is_none() {
+                        return;
+                    }
+
+                    match self.surface.as_ref().unwrap().surface.get_current_texture() {
+                        Ok(texture) => {
+                            if let Err(err) = self.draw(texture) {
+                                error!("Draw Error: {:?}", err);
+                                event_loop.exit();
+                            }
+                        }
+                        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                            self.resize(self.surface.as_ref().unwrap().window.inner_size());
+                        }
+                        Err(wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other) => {
+                            error!("Out of memory!");
                             event_loop.exit();
                         }
-                    }
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        self.resize(self.surface.as_ref().unwrap().window.inner_size());
-                    }
-                    Err(wgpu::SurfaceError::OutOfMemory | wgpu::SurfaceError::Other) => {
-                        error!("Out of memory!");
-                        event_loop.exit();
-                    }
-                    Err(wgpu::SurfaceError::Timeout) => {
-                        warn!("Surface timeout");
+                        Err(wgpu::SurfaceError::Timeout) => {
+                            warn!("Surface timeout");
+                        }
                     }
                 }
+                WindowEvent::Resized(new_size) => {
+                    self.resize(new_size);
+                }
+                _ => {}
             }
-            WindowEvent::Resized(new_size) => {
-                self.resize(new_size);
-            }
-            _ => {}
         }
     }
 
