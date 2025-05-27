@@ -3,14 +3,14 @@
 #[macro_use]
 extern crate tracing;
 
-use std::cmp::min;
 use anyhow::Context;
 use cfg_if::cfg_if;
 use egui::ViewportId;
+use egui_wgpu::ScreenDescriptor;
+use std::cmp::min;
 use std::iter::once;
 use std::path::PathBuf;
 use std::sync::Arc;
-use egui_wgpu::ScreenDescriptor;
 #[cfg(target_arch = "wasm32")]
 use tokio::runtime;
 use tokio::runtime::Runtime;
@@ -86,6 +86,8 @@ struct AppSurface {
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
+    redrawn: bool,
+    resized: bool,
 }
 
 impl App {
@@ -164,42 +166,63 @@ impl App {
                 });
             }
 
-            let egui_output = surface.egui_ctx.run(
-                surface.egui_state.take_egui_input(&surface.window),
-                |ctx| {},
-            );
+            let egui_output =
+                surface
+                    .egui_ctx
+                    .run(surface.egui_state.take_egui_input(&surface.window), |ctx| {
+                        egui::Window::new("Settings").show(ctx, |ui| {
+                            ctx.settings_ui(ui);
+                        });
+                    });
 
             let scale_factor = surface.window.scale_factor() as f32;
 
-            let paint_jobs = surface.egui_ctx.tessellate(egui_output.shapes, scale_factor);
+            let paint_jobs = surface
+                .egui_ctx
+                .tessellate(egui_output.shapes, scale_factor);
 
             let descriptor = ScreenDescriptor {
                 size_in_pixels: [surface.size.width, surface.size.height],
                 pixels_per_point: scale_factor,
             };
-            surface.egui_renderer.update_buffers(&surface.device, &surface.queue, &mut encoder, &paint_jobs, &descriptor);
-            
+            surface.egui_renderer.update_buffers(
+                &surface.device,
+                &surface.queue,
+                &mut encoder,
+                &paint_jobs,
+                &descriptor,
+            );
+
             for (tex_id, delta) in egui_output.textures_delta.set {
-                surface.egui_renderer.update_texture(&surface.device, &surface.queue, tex_id, &delta);
+                surface.egui_renderer.update_texture(
+                    &surface.device,
+                    &surface.queue,
+                    tex_id,
+                    &delta,
+                );
             }
 
             {
-                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Egui Render Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                }).forget_lifetime();
+                let mut render_pass = encoder
+                    .begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Egui Render Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    })
+                    .forget_lifetime();
 
-                surface.egui_renderer.render(&mut render_pass, &paint_jobs, &descriptor);
+                surface
+                    .egui_renderer
+                    .render(&mut render_pass, &paint_jobs, &descriptor);
             }
 
             surface
@@ -221,7 +244,9 @@ impl ApplicationHandler for App {
                 .create_window(
                     Window::default_attributes()
                         .with_visible(true)
-                        .with_inner_size(PhysicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
+                        .with_inner_size(PhysicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
+                        .with_min_inner_size(PhysicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
+                        .with_max_inner_size(PhysicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT)),
                 )
                 .expect("Creating window"),
         );
@@ -295,7 +320,10 @@ impl ApplicationHandler for App {
             view_formats: vec![],
         };
 
-        let max_tex_len = min(adapter.limits().max_texture_dimension_2d, limits.max_texture_dimension_2d);
+        let max_tex_len = min(
+            adapter.limits().max_texture_dimension_2d,
+            limits.max_texture_dimension_2d,
+        );
 
         // setup egui
         let egui_ctx = egui::Context::default();
@@ -319,6 +347,8 @@ impl ApplicationHandler for App {
             egui_ctx,
             egui_state,
             egui_renderer,
+            redrawn: false,
+            resized: false,
         });
     }
 
@@ -333,6 +363,13 @@ impl ApplicationHandler for App {
         } else {
             None
         };
+
+        if let Some(surface) = &mut self.surface && surface.redrawn && !surface.resized {
+            let window = &surface.window;
+            window.set_min_inner_size::<PhysicalSize<u32>>(None);
+            window.set_max_inner_size::<PhysicalSize<u32>>(None);
+            surface.resized = true;
+        }
 
         if response.is_none_or(|res| !res.consumed) {
             match event {
@@ -363,6 +400,8 @@ impl ApplicationHandler for App {
                             warn!("Surface timeout");
                         }
                     }
+
+                    self.surface.as_mut().unwrap().redrawn = true;
                 }
                 WindowEvent::Resized(new_size) => {
                     self.resize(new_size);
@@ -370,10 +409,21 @@ impl ApplicationHandler for App {
                 _ => {}
             }
         }
+
+        if let Some(response) = response
+            && response.repaint
+        {
+            self.surface.as_ref().unwrap().window.request_redraw();
+        }
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         // drop surface
+        self.surface = None;
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        // drop surface on exit
         self.surface = None;
     }
 }
