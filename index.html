@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hello Wasm</title>
+</head>
+<body>
+<div id="viewer3d-wasm"></div>
+<script>
+    async function startup() {
+        const {init, run} = await import("./pkg/viewer3d.js");
+        await init();
+        run();
+    }
+    startup();
+</script>
+</body>
+</html>
