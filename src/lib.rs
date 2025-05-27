@@ -3,6 +3,7 @@
 #[macro_use]
 extern crate tracing;
 
+use std::cmp::min;
 use anyhow::Context;
 use cfg_if::cfg_if;
 use egui::ViewportId;
@@ -181,8 +182,25 @@ impl App {
             for (tex_id, delta) in egui_output.textures_delta.set {
                 surface.egui_renderer.update_texture(&surface.device, &surface.queue, tex_id, &delta);
             }
-            
-            surface.egui_renderer.render
+
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Egui Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                }).forget_lifetime();
+
+                surface.egui_renderer.render(&mut render_pass, &paint_jobs, &descriptor);
+            }
 
             surface
                 .egui_state
@@ -238,16 +256,18 @@ impl ApplicationHandler for App {
             }))
             .expect("Error creating adapter");
 
+        let limits = if cfg!(all(target_arch = "wasm32", feature = "webgl")) {
+            wgpu::Limits::downlevel_webgl2_defaults()
+        } else {
+            wgpu::Limits::default()
+        };
+
         let (device, queue) = self
             .runtime
             .block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::empty(),
-                required_limits: if cfg!(all(target_arch = "wasm32", feature = "webgl")) {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
-                },
+                required_limits: limits.clone(),
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             }))
@@ -258,7 +278,7 @@ impl ApplicationHandler for App {
         let surface_format = surface_caps
             .formats
             .iter()
-            .find(|f| f.is_srgb())
+            .find(|f| !f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
@@ -275,6 +295,8 @@ impl ApplicationHandler for App {
             view_formats: vec![],
         };
 
+        let max_tex_len = min(adapter.limits().max_texture_dimension_2d, limits.max_texture_dimension_2d);
+
         // setup egui
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -283,7 +305,7 @@ impl ApplicationHandler for App {
             &window,
             Some(window.scale_factor() as f32),
             window.theme(),
-            Some(adapter.limits().max_texture_dimension_2d as usize),
+            Some(max_tex_len as usize),
         );
         let egui_renderer = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
 
