@@ -92,6 +92,7 @@ struct AppSurface {
 
 impl App {
     fn new(args: StartupArgs) -> anyhow::Result<Self> {
+        info!("Initializing runtime...");
         let runtime;
         #[cfg(target_arch = "wasm32")]
         {
@@ -105,6 +106,7 @@ impl App {
             runtime = Runtime::new()?;
         }
 
+        info!("Initializing instance...");
         let instance = Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
             backends: wgpu::Backends::PRIMARY,

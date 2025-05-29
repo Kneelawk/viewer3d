@@ -9,9 +9,12 @@
 <div id="viewer3d-wasm"></div>
 <script>
     async function startup() {
-        const {init, run} = await import("./pkg/viewer3d.js");
-        await init();
-        run();
+        const viewer3d = await import("./pkg/viewer3d.js");
+        console.log(viewer3d);
+
+        const wasmModule = await WebAssembly.compileStreaming(fetch('./pkg/viewer3d_bg.wasm'));
+        viewer3d.initSync(wasmModule);
+        viewer3d.run();
     }
     startup();
 </script>

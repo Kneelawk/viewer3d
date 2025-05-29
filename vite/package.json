@@ -8,7 +8,7 @@
     "vite-plugin-wasm-pack": "^0.1.12"
   },
   "scripts": {
-    "wasm": "wasm-pack build ../ -d ../pkg --target web --no-opt",
+    "wasm": "wasm-pack build ../ -d ./pkg --target web",
     "dev": "vite",
     "build": "vite build"
   }
