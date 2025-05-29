@@ -1,0 +1,15 @@
+{
+  "name": "vite-plugin-wasm-pack-example",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "devDependencies": {
+    "vite": "^6.3.5",
+    "vite-plugin-wasm-pack": "^0.1.12"
+  },
+  "scripts": {
+    "wasm": "wasm-pack build ../ -d ../pkg --target web --no-opt",
+    "dev": "vite",
+    "build": "vite build"
+  }
+}
