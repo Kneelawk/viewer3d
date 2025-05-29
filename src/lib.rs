@@ -24,33 +24,13 @@ use winit::window::{Window, WindowId};
 const WINDOW_WIDTH: u32 = 1280;
 const WINDOW_HEIGHT: u32 = 720;
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
-
 #[derive(Default)]
 pub struct StartupArgs {
     pub file: Option<PathBuf>,
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
-pub fn run() {
-    match run_impl(Default::default()) {
-        Ok(_) => {}
-        Err(err) => {
-            error!("Error running viewer {:?}", err);
-        }
-    }
-}
-
 pub fn run_impl(args: StartupArgs) -> anyhow::Result<()> {
-    cfg_if! {
-        if #[cfg(target_arch = "wasm32")] {
-            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            tracing_wasm::set_as_global_default();
-        } else {
-            tracing_subscriber::fmt::fmt().try_init().unwrap();
-        }
-    }
+    tracing_subscriber::fmt::fmt().try_init().unwrap();
 
     info!("Initializing...");
 
@@ -93,25 +73,11 @@ struct AppSurface {
 impl App {
     fn new(args: StartupArgs) -> anyhow::Result<Self> {
         info!("Initializing runtime...");
-        let runtime;
-        #[cfg(target_arch = "wasm32")]
-        {
-            runtime = runtime::Builder::new_current_thread()
-                .build()
-                .context("Creating tokio runtime")?;
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            runtime = Runtime::new()?;
-        }
+        let runtime = Runtime::new()?;
 
         info!("Initializing instance...");
         let instance = Instance::new(&wgpu::InstanceDescriptor {
-            #[cfg(not(all(target_arch = "wasm32", feature = "webgl")))]
             backends: wgpu::Backends::PRIMARY,
-            #[cfg(all(target_arch = "wasm32", feature = "webgl"))]
-            backends: wgpu::Backends::GL,
             ..Default::default()
         });
 
@@ -253,22 +219,6 @@ impl ApplicationHandler for App {
                 .expect("Creating window"),
         );
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            use winit::platform::web::WindowExtWebSys;
-            web_sys::window()
-                .and_then(|win| win.document())
-                .and_then(|doc| {
-                    let dst = doc.get_element_by_id("viewer3d-wasm")?;
-                    let canvas = web_sys::Element::from(
-                        window.canvas().expect("Unable to get window canvas"),
-                    );
-                    dst.append_child(&canvas).ok()?;
-                    Some(())
-                })
-                .expect("Can't append canvas to document body")
-        }
-
         let surface = self
             .instance
             .create_surface(window.clone())
@@ -283,11 +233,7 @@ impl ApplicationHandler for App {
             }))
             .expect("Error creating adapter");
 
-        let limits = if cfg!(all(target_arch = "wasm32", feature = "webgl")) {
-            wgpu::Limits::downlevel_webgl2_defaults()
-        } else {
-            wgpu::Limits::default()
-        };
+        let limits = wgpu::Limits::default();
 
         let (device, queue) = self
             .runtime
@@ -366,7 +312,10 @@ impl ApplicationHandler for App {
             None
         };
 
-        if let Some(surface) = &mut self.surface && surface.redrawn && !surface.resized {
+        if let Some(surface) = &mut self.surface
+            && surface.redrawn
+            && !surface.resized
+        {
             let window = &surface.window;
             window.set_min_inner_size::<PhysicalSize<u32>>(None);
             window.set_max_inner_size::<PhysicalSize<u32>>(None);
